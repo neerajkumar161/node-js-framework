@@ -6,7 +6,7 @@ This is a lightweight, minimal and custom [Express](https://github.com/expressjs
 
 - Middleware support for handling HTTP requests
 - Routing based on URL and HTTP method
-- Error handling middleware (WIP)
+- Error handling middleware
 - Built-in server using the Node.js `http` module
 
 ## Installation
