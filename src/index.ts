@@ -1,11 +1,10 @@
 import http from 'http'
-import { AppRequest, RequestHandler, TMethods } from './../global.d'
-
+import { AppRequest, AppResponse, ErrorHandler, RequestHandler, TMethods } from './../global.d'
 
 class App {
   private server: http.Server
   private routes: Record<string, RequestHandler[]>
-
+  private errorHandler?: ErrorHandler
   constructor() {
     /* We bind the handleRequest method to the current instance using bind(this). 
       This ensures that when the server receives a request, the handleRequest method is called with the correct context 
@@ -15,16 +14,37 @@ class App {
     this.routes = {} /* Initial routes will be empty */
   }
 
-  use(route: string, handler: RequestHandler) {
-    this.addRoute('ALL', route, handler)
+  use(route: string, ...handlers: RequestHandler[]): void
+  use(route: RequestHandler, ...handlers: RequestHandler[]): void
+  use(route: ErrorHandler): void
+  use(route: string | RequestHandler | ErrorHandler, ...handlers: RequestHandler[]) {
+    if (typeof route === 'string') {
+      handlers?.forEach((handler) => {
+        this.addRoute('ALL', route, handler!)
+      })
+      return
+    } else if (route.length === 3) {
+      handlers?.forEach((handler) => {
+        if (handler) this.addRoute('ALL', '/', handler)
+        else this.addRoute('ALL', '/', route as RequestHandler)
+      })
+    }
+
+    if (route.length === 4) {
+      this.errorHandler = route as ErrorHandler
+    }
+
+    return this
   }
 
   get(route: string, handler: RequestHandler) {
     this.addRoute('GET', route, handler)
+    return this
   }
 
   post(route: string, handler: RequestHandler) {
     this.addRoute('POST', route, handler)
+    return this
   }
 
   listen(port: number, callback?: () => void) {
@@ -43,17 +63,38 @@ class App {
 
     const handlers = this.routes[routeKey] || this.routes[`ALL:${url}`]
 
-    console.log('All Route Handler', this.routes)
-    console.log('Handlers', handlers)
     if (handlers) {
-      /* Assertion because without parsing we've no req.body */
       this.jsonBodyParser(req as AppRequest, () => {
-        handlers.forEach((handler) => handler(req as AppRequest, res))
+        this.executeHandlers(handlers, req, res)
       })
     } else {
       res.statusCode = 404
       res.end('Not Found')
     }
+  }
+
+  private handleRequestError(err: Error, req: AppRequest, res: AppResponse) {
+    if (this.errorHandler) {
+      this.errorHandler(err, req, res, () => {})
+    } else {
+      res.statusCode = 500
+      res.end('Internal Server Error!')
+    }
+  }
+
+  private executeHandlers(handlers: RequestHandler[], req: http.IncomingMessage, res: http.ServerResponse) {
+    let currentIdx = 0
+
+    const next = (err?: any) => {
+      currentIdx++
+      if (err) {
+        this.handleRequestError(err, req as AppRequest, res)
+      } else if (currentIdx < handlers.length) {
+        handlers[currentIdx](req as AppRequest, res, next)
+      }
+    }
+
+    handlers[currentIdx](req as AppRequest, res, next)
   }
 
   private jsonBodyParser(req: AppRequest, callback: () => void) {
@@ -67,7 +108,7 @@ class App {
       try {
         req.body = JSON.parse(body)
       } catch (error) {
-        console.log('Error in jsonBodyParser', error)
+        console.log('Get Request')
         req.body = {} // if err then we will set empty body object
       }
       callback()
